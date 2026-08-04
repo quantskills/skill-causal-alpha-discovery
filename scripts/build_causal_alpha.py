@@ -111,6 +111,7 @@ FEATURE_TO_EXPRESSION: dict[str, str] = {
     "vol_cv_20d": "ts_std(volume, 20) / max(ts_mean(volume, 20), 1e-8)",
     "vol_cv_40d": "ts_std(volume, 40) / max(ts_mean(volume, 40), 1e-8)",
     "vol_cv_60d": "ts_std(volume, 60) / max(ts_mean(volume, 60), 1e-8)",
+    "vol_of_vol_20d": "ts_std(ts_std(returns(close, 1), 20), 40)",
     "vol_delta_5d": "delta(volume, 5) / max(delay(volume, 5), 1e-8)",
     "vol_delta_10d": "delta(volume, 10) / max(delay(volume, 10), 1e-8)",
     "vol_delta_20d": "delta(volume, 20) / max(delay(volume, 20), 1e-8)",

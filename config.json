@@ -10,7 +10,7 @@
     "exclude_st": true
   },
   "causal_discovery": {
-    "method": "hybrid",
+    "method": "ic_selection",
     "pc_alpha": 0.01,
     "pc_max_cond_set": 3,
     "lingam_prune_threshold": 0.05,

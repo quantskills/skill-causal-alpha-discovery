@@ -599,210 +599,305 @@ def generate_report(run_dir: str) -> str:
         # Combined verdict table when running all methods
         all_results = invariance.get("all_results", {})
         if all_results:
-            lines.append("### Combined Invariance Verdict")
-            lines.append("")
-            lines.append(
-                "Three regime definitions are tested independently. A robust "
-                "factor should pass all three — if it fails any, the effect is "
-                "sensitive to that particular type of regime change."
+            # Compute pass count for summary line
+            passed = sum(
+                1 for mdata in all_results.values()
+                if mdata.get("ate_homogeneity", {}).get("result") == "invariant"
             )
-            lines.append("")
-            method_labels = {
-                "volatility_clustering": "Volatility",
-                "return_quantiles": "Bull/Bear",
-                "calendar_year": "Calendar Year",
-            }
-            lines.append("| Method | χ² | p-value | Regimes | Sign Cons. | Verdict |")
-            lines.append("|--------|-----|---------|---------|------------|---------|")
-            passed = 0
-            total = 0
-            for mname, mdata in all_results.items():
-                ah = mdata.get("ate_homogeneity", {})
-                chi2 = ah.get("chi2_statistic", 0)
-                pv = ah.get("p_value", 1)
-                nr = ah.get("n_regimes_tested", 0)
-                sc = ah.get("sign_consistency", 0)
-                result = ah.get("result", "N/A")
-                em = "✅" if result == "invariant" else "⚠️"
-                label = method_labels.get(mname, mname)
-                lines.append(
-                    f"| {label} | {chi2:.2f} | {pv:.4f} | {nr} | {sc*100:.0f}% | {em} {result} |"
-                )
-                total += 1
-                if result == "invariant":
-                    passed += 1
-            lines.append("")
-            if passed == total:
-                lines.append("✅ **Passed all three** — strong evidence of genuine causal invariance.")
-            elif passed == 0:
-                lines.append("❌ **Failed all three** — the factor is likely a spurious correlation.")
-            else:
-                lines.append(
-                    f"🟡 **Passed {passed}/{total}** — the factor is stable in some "
-                    f"dimensions but sensitive in others."
-                )
-            lines.append("")
+            total = len(all_results)
 
         homog = invariance.get("ate_homogeneity", {})
         if homog:
             p_val = homog.get("p_value", 0)
             alpha = homog.get("alpha", 0.05)
-            lines.append("### ATE Homogeneity (χ² Test)")
-            lines.append("")
-            lines.append(
-                "Tests whether the factor's predictive effect is stable across "
-                "different market regimes. The null hypothesis is that the ATE "
-                "is the same in every regime (i.e., the factor is genuinely "
-                "causal and invariant). If p ≤ α, we reject that hypothesis — "
-                "the effect varies by regime and may be a spurious correlation."
-            )
-            lines.append("")
-            lines.append("| Metric | Value |")
-            lines.append("|--------|-------|")
-            result_label = homog.get("result", "N/A")
-            emoji = "✅" if result_label == "invariant" else "⚠️"
-            lines.append(f"| **Verdict** | {emoji} **{result_label}** |")
-            lines.append(f"| χ² Statistic | {homog.get('chi2_statistic', 0):.4f} |")
-            df_val = homog.get("degrees_of_freedom", 0)
-            lines.append(f"| Degrees of Freedom | {df_val} |")
-            lines.append(f"| p-value | {p_val:.4f} |")
-            lines.append(f"| Significance (α) | {alpha} |")
-            lines.append(f"| Regimes Tested | {homog.get('n_regimes_tested', 0)} |")
-            sign_cons = homog.get("sign_consistency", 0)
-            lines.append(f"| Sign Consistency | {sign_cons*100:.0f}% |")
-            ate_pooled = homog.get("ate_pooled", 0)
-            lines.append(f"| Pooled ATE | {ate_pooled:+.4f} |")
-            lines.append("")
 
-            # Explanations as bullet list
-            lines.append("**What each metric means:**")
-            lines.append("")
-            verdict_explanation = (
-                "The factor's effect is statistically indistinguishable across "
-                "all tested regimes — consistent with a genuine causal mechanism."
-            ) if result_label == "invariant" else (
-                "The factor's predictive power changes significantly depending "
-                "on market conditions — likely a spurious correlation rather "
-                "than a stable causal relationship."
-            )
-            lines.append(f"- **Verdict**: {verdict_explanation}")
-            lines.append(
-                f"- **χ² ({homog.get('chi2_statistic', 0):.2f})**: "
-                f"Measures how much the ATE varies across regimes. A larger "
-                f"value means the effect differs more between calm and turbulent markets."
-            )
-            lines.append(
-                f"- **Degrees of Freedom ({df_val})**: "
-                f"The number of independent comparisons ({df_val} = {homog.get('n_regimes_tested', 0)} regimes minus 1). "
-                f"More regimes require stronger evidence to conclude invariance."
-            )
-            lines.append(
-                f"- **p-value ({p_val:.4f})**: "
-                f"If the factor were truly invariant, this is the probability "
-                f"of observing this much ATE variation by chance. "
-                f"A small p-value (≤{alpha}) means the variation is too large "
-                f"to be random noise — the factor is regime-dependent."
-            )
-            lines.append(
-                f"- **Significance α ({alpha})**: "
-                f"The threshold for rejecting invariance. α = {alpha} means we "
-                f"accept a 5% chance of falsely labeling a truly invariant "
-                f"factor as regime-dependent."
-            )
-            lines.append(
-                f"- **Regimes Tested ({homog.get('n_regimes_tested', 0)})**: "
-                f"Number of distinct market environments identified by "
-                f"volatility clustering. Low-vol and high-vol periods are "
-                f"treated as separate regimes."
-            )
-            if sign_cons >= 0.9:
-                sign_explanation = (
-                    "the ATE has the same sign (direction) in nearly every "
-                    "regime — the effect direction is consistent"
-                )
-            elif sign_cons >= 0.7:
-                sign_explanation = (
-                    "the ATE keeps the same sign in most regimes, but flips "
-                    "direction in a minority — the effect weakens or reverses "
-                    "under certain market conditions"
-                )
-            else:
-                sign_explanation = (
-                    "the ATE frequently flips sign across regimes — the "
-                    "direction of the effect is unreliable"
-                )
-            lines.append(
-                f"- **Sign Consistency ({sign_cons*100:.0f}%)**: "
-                f"Fraction of regimes where ATE keeps the same sign — {sign_explanation}."
-            )
-            lines.append(
-                f"- **Pooled ATE ({ate_pooled:+.4f})**: "
-                f"The weighted average effect across all regimes. "
-                f"{'Positive: stocks with higher factor scores tend to have higher forward returns.' if ate_pooled > 0 else 'Negative: stocks with higher factor scores tend to have lower forward returns (a reversal effect).'}"
-            )
-            lines.append("")
-
-            # Per-regime ATE table with date ranges
-            ate_per_regime = homog.get("ate_per_regime", [])
-            se_per_regime = homog.get("se_per_regime", [])
-            obs_per_regime = homog.get("obs_per_regime", [])
-            if ate_per_regime:
-                # Compute date ranges per regime from stats
-                regime_dates: dict[int, tuple[str, str]] = {}
-                if HAS_PANDAS:
-                    stats_for_regime = rd / "stats.csv"
-                    if not stats_for_regime.exists():
-                        stats_for_regime = rd / "oos_2020_2025" / "stats.csv"
-                    if stats_for_regime.exists():
-                        sdf = pd.read_csv(stats_for_regime)
-                        sdf["date"] = pd.to_datetime(sdf["date"])
-                        # Approximate: split dates evenly across regimes
-                        n_reg = len(ate_per_regime)
-                        if n_reg > 0:
-                            unique_dates = sorted(sdf["date"].unique())
-                            chunk_size = max(1, len(unique_dates) // n_reg)
-                            for i in range(n_reg):
-                                start_idx = i * chunk_size
-                                end_idx = min((i + 1) * chunk_size - 1, len(unique_dates) - 1)
-                                if start_idx < len(unique_dates):
-                                    regime_dates[i] = (
-                                        unique_dates[start_idx].strftime("%Y-%m-%d"),
-                                        unique_dates[end_idx].strftime("%Y-%m-%d"),
-                                    )
-
-                # Regime type labels
-                n_reg_total = len(ate_per_regime)
-                regime_labels: dict[int, str] = {}
-                vol_labels = ["Very Low Vol", "Low Vol", "Med-Low Vol", "Med-High Vol", "High Vol", "Very High Vol"]
-                for ri in range(n_reg_total):
-                    if ri < len(vol_labels):
-                        regime_labels[ri] = vol_labels[ri]
-                    else:
-                        frac = ri / max(n_reg_total - 1, 1)
-                        regime_labels[ri] = f"Vol {frac:.0%}"
-
-                lines.append("### Combined Factor ATE by Regime")
+            if all_results:
+                # All methods: show χ² summary for each method
+                lines.append("### ATE Homogeneity (χ² Test)")
                 lines.append("")
                 lines.append(
-                    "The table below shows the Average Treatment Effect (ATE) "
-                    "of the **full causal alpha factor** in each market regime. "
-                    "Consistent ATE across regimes = causal stability. Regimes "
-                    "are ordered by volatility level."
+                    "Tests whether the ATE is equal across all regimes within "
+                    "each regime definition. p ≤ α means the effect varies "
+                    "significantly by that type of regime."
                 )
                 lines.append("")
-                lines.append("| Regime | Type | Date Range | ATE | Std Error | Obs |")
-                lines.append("|--------|------|-----------|-----|-----------|-----|")
-                for i in range(len(ate_per_regime)):
-                    ate = ate_per_regime[i]
-                    se = se_per_regime[i] if i < len(se_per_regime) else 0
-                    obs = obs_per_regime[i] if i < len(obs_per_regime) else 0
-                    dr = regime_dates.get(i, ("—", "—"))
-                    rtype = regime_labels.get(i, f"Regime {i}")
-                    if not np.isnan(ate):
-                        lines.append(
-                            f"| {i} | {rtype} | {dr[0]} → {dr[1]} | {ate:+.4f} | ±{se:.4f} | {obs} |"
-                        )
+                lines.append("| Method | χ² | df | p-value | Regimes | Sign Cons. | Pooled ATE |")
+                lines.append("|--------|-----|-----|---------|---------|------------|------------|")
+                method_labels = {
+                    "volatility_clustering": "Volatility",
+                    "return_quantiles": "Bull/Bear",
+                    "calendar_year": "Calendar Year",
+                }
+                for mname, mdata in all_results.items():
+                    ah = mdata.get("ate_homogeneity", {})
+                    chi2 = ah.get("chi2_statistic", 0)
+                    df_v = ah.get("degrees_of_freedom", 0)
+                    pv = ah.get("p_value", 1)
+                    nr = ah.get("n_regimes_tested", 0)
+                    sc = ah.get("sign_consistency", 0)
+                    ap = ah.get("ate_pooled", 0)
+                    label = method_labels.get(mname, mname)
+                    lines.append(
+                        f"| {label} | {chi2:.2f} | {df_v} | {pv:.4f} | {nr} | {sc*100:.0f}% | {ap:+.4f} |"
+                    )
                 lines.append("")
+                lines.append("**What each metric means:**")
+                lines.append("")
+                lines.append(
+                    f"- **χ²**: Measures how much the ATE varies across regimes within that method. "
+                    f"Higher = more dispersion."
+                )
+                lines.append(
+                    f"- **df (degrees of freedom)**: Number of regimes minus 1. "
+                    f"With more regimes, larger χ² values are expected by chance."
+                )
+                lines.append(
+                    f"- **p-value**: Probability of seeing this much variation if the factor "
+                    f"were truly invariant. p ≤ {alpha} means regime-dependent."
+                )
+                lines.append(
+                    f"- **Sign Consistency**: % of regimes where the ATE keeps the same sign. "
+                    f"Below 70% means the effect direction flips in some regimes."
+                )
+                lines.append(
+                    f"- **Pooled ATE**: Weighted average ATE. Negative = reversal effect "
+                    f"(higher factor → lower returns)."
+                )
+                lines.append("")
+                if passed == total:
+                    lines.append("✅ **Passed all three** — strong evidence of genuine causal invariance.")
+                elif passed == 0:
+                    lines.append("❌ **Failed all three** — the factor is likely a spurious correlation.")
+                else:
+                    lines.append(
+                        f"🟡 **Passed {passed}/{total}** — the factor is stable in some "
+                        f"dimensions but sensitive in others."
+                    )
+                lines.append("")
+            else:
+                # Single method: show detailed table with explanations
+                lines.append("### ATE Homogeneity (χ² Test)")
+                lines.append("")
+                lines.append(
+                    "Tests whether the factor's predictive effect is stable across "
+                    "different market regimes. The null hypothesis is that the ATE "
+                    "is the same in every regime (i.e., the factor is genuinely "
+                    "causal and invariant). If p ≤ α, we reject that hypothesis — "
+                    "the effect varies by regime and may be a spurious correlation."
+                )
+                lines.append("")
+                lines.append("| Metric | Value |")
+                lines.append("|--------|-------|")
+                result_label = homog.get("result", "N/A")
+                emoji = "✅" if result_label == "invariant" else "⚠️"
+                lines.append(f"| **Verdict** | {emoji} **{result_label}** |")
+                lines.append(f"| χ² Statistic | {homog.get('chi2_statistic', 0):.4f} |")
+                df_val = homog.get("degrees_of_freedom", 0)
+                lines.append(f"| Degrees of Freedom | {df_val} |")
+                lines.append(f"| p-value | {p_val:.4f} |")
+                lines.append(f"| Significance (α) | {alpha} |")
+                lines.append(f"| Regimes Tested | {homog.get('n_regimes_tested', 0)} |")
+                sign_cons = homog.get("sign_consistency", 0)
+                lines.append(f"| Sign Consistency | {sign_cons*100:.0f}% |")
+                ate_pooled = homog.get("ate_pooled", 0)
+                lines.append(f"| Pooled ATE | {ate_pooled:+.4f} |")
+                lines.append("")
+
+                # Explanations as bullet list
+                lines.append("**What each metric means:**")
+                lines.append("")
+                verdict_explanation = (
+                    "The factor's effect is statistically indistinguishable across "
+                    "all tested regimes — consistent with a genuine causal mechanism."
+                ) if result_label == "invariant" else (
+                    "The factor's predictive power changes significantly depending "
+                    "on market conditions — likely a spurious correlation rather "
+                    "than a stable causal relationship."
+                )
+                lines.append(f"- **Verdict**: {verdict_explanation}")
+                lines.append(
+                    f"- **χ² ({homog.get('chi2_statistic', 0):.2f})**: "
+                    f"Measures how much the ATE varies across regimes. A larger "
+                    f"value means the effect differs more between calm and turbulent markets."
+                )
+                lines.append(
+                    f"- **Degrees of Freedom ({df_val})**: "
+                    f"The number of independent comparisons ({df_val} = {homog.get('n_regimes_tested', 0)} regimes minus 1). "
+                    f"More regimes require stronger evidence to conclude invariance."
+                )
+                lines.append(
+                    f"- **p-value ({p_val:.4f})**: "
+                    f"If the factor were truly invariant, this is the probability "
+                    f"of observing this much ATE variation by chance. "
+                    f"A small p-value (≤{alpha}) means the variation is too large "
+                    f"to be random noise — the factor is regime-dependent."
+                )
+                lines.append(
+                    f"- **Significance α ({alpha})**: "
+                    f"The threshold for rejecting invariance. α = {alpha} means we "
+                    f"accept a 5% chance of falsely labeling a truly invariant "
+                    f"factor as regime-dependent."
+                )
+                lines.append(
+                    f"- **Regimes Tested ({homog.get('n_regimes_tested', 0)})**: "
+                    f"Number of distinct market environments identified by "
+                    f"volatility clustering. Low-vol and high-vol periods are "
+                    f"treated as separate regimes."
+                )
+                if sign_cons >= 0.9:
+                    sign_explanation = (
+                        "the ATE has the same sign (direction) in nearly every "
+                        "regime — the effect direction is consistent"
+                    )
+                elif sign_cons >= 0.7:
+                    sign_explanation = (
+                        "the ATE keeps the same sign in most regimes, but flips "
+                        "direction in a minority — the effect weakens or reverses "
+                        "under certain market conditions"
+                    )
+                else:
+                    sign_explanation = (
+                        "the ATE frequently flips sign across regimes — the "
+                        "direction of the effect is unreliable"
+                    )
+                lines.append(
+                    f"- **Sign Consistency ({sign_cons*100:.0f}%)**: "
+                    f"Fraction of regimes where ATE keeps the same sign — {sign_explanation}."
+                )
+                lines.append(
+                    f"- **Pooled ATE ({ate_pooled:+.4f})**: "
+                    f"The weighted average effect across all regimes. "
+                    f"{'Positive: stocks with higher factor scores tend to have higher forward returns.' if ate_pooled > 0 else 'Negative: stocks with higher factor scores tend to have lower forward returns (a reversal effect).'}"
+                )
+                lines.append("")
+
+            # ── Per-regime ATE tables (one per method if "all") ────────────────
+            if all_results:
+                # Show ATE per regime for each method
+                method_ate_labels = {
+                    "volatility_clustering": {
+                        "title": "Volatility Regimes",
+                        "desc": "Regimes ordered by 20-day rolling volatility.",
+                        "labels": ["Very Low Vol", "Low Vol", "Med-Low Vol", "Med-High Vol", "High Vol", "Very High Vol"],
+                    },
+                    "return_quantiles": {
+                        "title": "Bull/Bear Regimes",
+                        "desc": "Regimes ordered by 20-day rolling return (bear → bull).",
+                        "labels": ["Deep Bear", "Bear", "Mild Bear", "Mild Bull", "Bull", "Strong Bull"],
+                    },
+                    "calendar_year": {
+                        "title": "Calendar Year Regimes",
+                        "desc": "One regime per calendar year.",
+                        "labels": [],  # Use year as label
+                    },
+                }
+                for mname, mdata in all_results.items():
+                    ah = mdata.get("ate_homogeneity", {})
+                    ate_list = ah.get("ate_per_regime", [])
+                    se_list = ah.get("se_per_regime", [])
+                    obs_list = ah.get("obs_per_regime", [])
+                    if not ate_list:
+                        continue
+
+                    minfo = method_ate_labels.get(mname, {"title": mname, "desc": "", "labels": []})
+                    lines.append(f"### {minfo['title']}")
+                    lines.append("")
+                    lines.append(minfo["desc"])
+                    lines.append("")
+                    lines.append("| Regime | Type | ATE | Std Error | Obs |")
+                    lines.append("|--------|------|-----|-----------|-----|")
+
+                    # Compute date ranges
+                    n_reg = len(ate_list)
+                    if HAS_PANDAS:
+                        sdf = pd.read_csv(perf_stats_path if 'perf_stats_path' in dir() else (rd / "stats.csv"))
+                        sdf["date"] = pd.to_datetime(sdf["date"])
+                        unique_dates = sorted(sdf["date"].unique())
+                        chunk_size = max(1, len(unique_dates) // n_reg) if n_reg > 0 else 0
+
+                    for i in range(n_reg):
+                        ate = ate_list[i]
+                        se = se_list[i] if i < len(se_list) else 0
+                        obs = obs_list[i] if i < len(obs_list) else 0
+                        if np.isnan(ate):
+                            continue
+
+                        # Label
+                        if mname == "calendar_year":
+                            if HAS_PANDAS and chunk_size > 0:
+                                start_idx = i * chunk_size
+                                yr = unique_dates[min(start_idx, len(unique_dates) - 1)].year
+                                rtype = str(yr)
+                            else:
+                                rtype = f"Y{i}"
+                        else:
+                            labels = minfo.get("labels", [])
+                            rtype = labels[i] if i < len(labels) else f"Regime {i}"
+
+                        lines.append(
+                            f"| {i} | {rtype} | {ate:+.4f} | ±{se:.4f} | {obs} |"
+                        )
+                    lines.append("")
+            else:
+                # Single method: show one ATE table
+                ate_per_regime = homog.get("ate_per_regime", [])
+                se_per_regime = homog.get("se_per_regime", [])
+                obs_per_regime = homog.get("obs_per_regime", [])
+                if ate_per_regime:
+                    # Compute date ranges
+                    regime_dates: dict[int, tuple[str, str]] = {}
+                    if HAS_PANDAS:
+                        stats_for_regime = rd / "stats.csv"
+                        if not stats_for_regime.exists():
+                            stats_for_regime = rd / "oos_2020_2025" / "stats.csv"
+                        if stats_for_regime.exists():
+                            sdf = pd.read_csv(stats_for_regime)
+                            sdf["date"] = pd.to_datetime(sdf["date"])
+                            n_reg = len(ate_per_regime)
+                            if n_reg > 0:
+                                unique_dates = sorted(sdf["date"].unique())
+                                chunk_size = max(1, len(unique_dates) // n_reg)
+                                for i in range(n_reg):
+                                    start_idx = i * chunk_size
+                                    end_idx = min((i + 1) * chunk_size - 1, len(unique_dates) - 1)
+                                    if start_idx < len(unique_dates):
+                                        regime_dates[i] = (
+                                            unique_dates[start_idx].strftime("%Y-%m-%d"),
+                                            unique_dates[end_idx].strftime("%Y-%m-%d"),
+                                        )
+
+                    n_reg_total = len(ate_per_regime)
+                    regime_labels: dict[int, str] = {}
+                    vol_labels = ["Very Low Vol", "Low Vol", "Med-Low Vol", "Med-High Vol", "High Vol", "Very High Vol"]
+                    for ri in range(n_reg_total):
+                        if ri < len(vol_labels):
+                            regime_labels[ri] = vol_labels[ri]
+                        else:
+                            frac = ri / max(n_reg_total - 1, 1)
+                            regime_labels[ri] = f"Vol {frac:.0%}"
+
+                    lines.append("### Combined Factor ATE by Regime")
+                    lines.append("")
+                    lines.append(
+                        "The table below shows the Average Treatment Effect (ATE) "
+                        "of the **full causal alpha factor** in each market regime. "
+                        "Consistent ATE across regimes = causal stability. Regimes "
+                        "are ordered by volatility level."
+                    )
+                    lines.append("")
+                    lines.append("| Regime | Type | Date Range | ATE | Std Error | Obs |")
+                    lines.append("|--------|------|-----------|-----|-----------|-----|")
+                    for i in range(len(ate_per_regime)):
+                        ate = ate_per_regime[i]
+                        se = se_per_regime[i] if i < len(se_per_regime) else 0
+                        obs = obs_per_regime[i] if i < len(obs_per_regime) else 0
+                        dr = regime_dates.get(i, ("—", "—"))
+                        rtype = regime_labels.get(i, f"Regime {i}")
+                        if not np.isnan(ate):
+                            lines.append(
+                                f"| {i} | {rtype} | {dr[0]} → {dr[1]} | {ate:+.4f} | ±{se:.4f} | {obs} |"
+                            )
+                    lines.append("")
 
         # Per-component invariance
         per_component = invariance.get("per_component", [])

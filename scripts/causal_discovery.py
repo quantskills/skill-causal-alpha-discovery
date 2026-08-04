@@ -769,7 +769,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--method", default=DEFAULT_METHOD,
-        choices=["pc", "lingam", "notears", "hybrid"],
+        choices=["pc", "lingam", "notears", "hybrid", "ic_selection"],
         help=f"Causal discovery method (default: {DEFAULT_METHOD}).",
     )
     parser.add_argument(
