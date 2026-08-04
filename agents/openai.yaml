@@ -1,0 +1,4 @@
+interface:
+  display_name: "Causal Alpha"
+  short_description: "Discover regime-invariant alpha factors from OHLCV data via causal discovery (PC+LiNGAM+NOTEARS). Finds factors whose predictive power is grounded in causal mechanisms, not spurious correlations."
+  default_prompt: "Use $causal-alpha to discover causal alpha factors from OHLCV data. Identify which features causally determine forward returns, build regime-invariant factor expressions, and validate via backtesting."

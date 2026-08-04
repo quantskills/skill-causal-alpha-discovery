@@ -1,0 +1,28 @@
+---
+description: Use the Causal Alpha skill to discover regime-invariant alpha factors from OHLCV data via causal discovery (PC+LiNGAM+NOTEARS). Use when you need factors that survive market regime changes.
+alwaysApply: false
+---
+
+# Causal Alpha Skill
+
+When the user asks to discover causal alpha factors, test whether factors are
+causal or merely correlational, find regime-invariant alphas, or build factors
+that survive market changes:
+
+1. Read `SKILL.md`.
+2. Read `references/causal-discovery.md` for algorithm details.
+3. Read `config.json` for current hyperparameters.
+4. Ensure OHLCV market data is available in Parquet format.
+5. Run Phase 1: Generate feature pool
+   `python scripts/generate_features.py --data-root <market_data> --output output/run_<ts>/features.csv`
+6. Run Phase 2: Discover causal structure
+   `python scripts/causal_discovery.py --features output/run_<ts>/features.csv --target forward_return_5d --output output/run_<ts>/causal_graph.json`
+7. Run Phase 3: Build causal alpha
+   `python scripts/build_causal_alpha.py --graph output/run_<ts>/causal_graph.json --features output/run_<ts>/features.csv --output output/run_<ts>/causal_factor.csv --expression-output output/run_<ts>/causal_alpha_expression.json`
+8. Run Phase 4: Test invariance
+   `python scripts/invariance_test.py --factor output/run_<ts>/causal_factor.csv --data-root <market_data> --output output/run_<ts>/invariance_report.json`
+9. Run Phase 5: Backtest
+   `python scripts/integrate_backtest.py --factor output/run_<ts>/causal_factor.csv --factor-column causal_alpha --data-root <market_data> --output-dir output/run_<ts>/`
+10. Read `causal_graph.json` to find which OHLCV features are causal parents of returns.
+11. Read `invariance_report.json` to see which edges pass regime-invariance tests.
+12. Report: causal alpha expression, backtest metrics (Sharpe, IC, MDD), invariance certificate, and IC decay advantage vs. baseline factors.

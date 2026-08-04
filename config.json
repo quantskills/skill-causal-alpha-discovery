@@ -1,0 +1,107 @@
+{
+  "data_split": {
+    "train_start": "20150101",
+    "train_end": "20201231",
+    "test_start": "20210101",
+    "test_end": "20251231"
+  },
+  "pandadata": {
+    "indicator": "000300",
+    "exclude_st": true
+  },
+  "causal_discovery": {
+    "method": "hybrid",
+    "pc_alpha": 0.01,
+    "pc_max_cond_set": 3,
+    "lingam_prune_threshold": 0.05,
+    "notears_lambda1": 0.1,
+    "notears_max_iter": 100,
+    "notears_threshold": 0.3,
+    "bootstrap_runs": 100,
+    "bootstrap_stability_threshold": 0.7,
+    "min_obs_per_stock": 252
+  },
+  "target": {
+    "forward_return_days": 5,
+    "alternative_horizons": [1, 10, 20]
+  },
+  "feature_generation": {
+    "families": ["momentum", "volatility", "volume_flow", "price_pattern", "cross_family"],
+    "max_features_per_family": 12,
+    "max_total_features": 60,
+    "min_rolling_window": 2,
+    "max_rolling_window": 252
+  },
+  "invariance_testing": {
+    "n_regimes": 6,
+    "regime_method": "volatility_clustering",
+    "min_regime_obs": 60,
+    "homogeneity_alpha": 0.05,
+    "stability_required_regimes": 0.8
+  },
+  "alpha_construction": {
+    "min_stability_for_inclusion": 0.7,
+    "max_components": 3,
+    "weight_method": "ate_times_stability",
+    "cross_sectional_rank": true
+  },
+  "backtest": {
+    "cost_bps": 5.0,
+    "holding_days": 5,
+    "longx": 200
+  },
+  "_help": {
+    "data_split": {
+      "train_start": "Start date for causal discovery training period (YYYYMMDD). Causal graph is learned ONLY from this period.",
+      "train_end": "End date for causal discovery training period (YYYYMMDD, inclusive).",
+      "test_start": "Start date for out-of-sample backtest period (YYYYMMDD). Backtest and invariance testing use this period.",
+      "test_end": "End date for out-of-sample backtest period (YYYYMMDD, inclusive)."
+    },
+    "pandadata": {
+      "indicator": "Default stock universe index for PandaData. 000300=CSI 300, 000905=CSI 500, 000016=SSE 50, 000852=CSI 1000.",
+      "exclude_st": "If true, exclude ST (special treatment) stocks from the universe."
+    },
+    "causal_discovery": {
+      "method": "Causal discovery method: 'pc', 'lingam', 'notears', or 'hybrid' (recommended). Hybrid runs PC for skeleton, LiNGAM for ordering and effect estimation, NOTEARS as fallback for high dimensions.",
+      "pc_alpha": "Significance level for conditional independence tests in PC algorithm. Lower = sparser graph, fewer false edges.",
+      "pc_max_cond_set": "Maximum size of conditioning set in PC algorithm. Higher = more thorough but exponentially slower.",
+      "lingam_prune_threshold": "Minimum absolute coefficient for LiNGAM to retain an edge. Higher = sparser DAG.",
+      "notears_lambda1": "L1 regularization strength for NOTEARS. Higher = sparser DAG.",
+      "notears_max_iter": "Maximum iterations for NOTEARS optimization.",
+      "notears_threshold": "Minimum absolute weight for NOTEARS to retain an edge after optimization.",
+      "bootstrap_runs": "Number of bootstrap resamples for stability scoring. Higher = more reliable but slower.",
+      "bootstrap_stability_threshold": "Minimum fraction of bootstrap runs an edge must appear in to be considered stable.",
+      "min_obs_per_stock": "Minimum trading days required per stock to be included in causal discovery."
+    },
+    "target": {
+      "forward_return_days": "Horizon (in trading days) for forward return prediction target.",
+      "alternative_horizons": "Additional horizons to test causal edges against, for robustness."
+    },
+    "feature_generation": {
+      "families": "Feature families to generate from OHLCV data: momentum, volatility, volume_flow, price_pattern, cross_family.",
+      "max_features_per_family": "Maximum features to generate per family.",
+      "max_total_features": "Hard cap on total generated features.",
+      "min_rolling_window": "Minimum window length for rolling/time-series functions.",
+      "max_rolling_window": "Maximum window length for rolling/time-series functions."
+    },
+    "invariance_testing": {
+      "n_regimes": "Number of distinct market regimes to identify for invariance testing.",
+      "regime_method": "Method for regime identification: 'volatility_clustering' (GARCH-based), 'return_quantiles', or 'calendar_year'.",
+      "min_regime_obs": "Minimum observations per regime to include in invariance test.",
+      "homogeneity_alpha": "Significance level for χ² test of ATE homogeneity across regimes.",
+      "stability_required_regimes": "Fraction of regimes where an edge must be present to be considered invariant."
+    },
+    "alpha_construction": {
+      "min_stability_for_inclusion": "Minimum bootstrap stability for a causal parent to be included in the final alpha.",
+      "max_components": "Maximum number of causal components in the final alpha expression (controls complexity).",
+      "weight_method": "How to weight components: 'ate_times_stability' (ATE × stability score) or 'ate_only' or 'equal'.",
+      "cross_sectional_rank": "If true, apply cross-sectional rank normalization to final factor."
+    },
+    "backtest": {
+      "_note": "All backtesting is done by the built-in standalone engine in integrate_backtest.py. No external skill dependency.",
+      "cost_bps": "Transaction cost in basis points (one-way).",
+      "holding_days": "Number of trading days between rebalance events.",
+      "longx": "Maximum number of long holdings."
+    }
+  }
+}

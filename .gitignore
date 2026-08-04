@@ -1,0 +1,16 @@
+# .gitignore for skill-causal-alpha
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.env
+*.env
+output/
+.DS_Store
+*.egg-info/
+.pandadata/
+*.parquet
+*.csv
+*.feather
+*.h5
+*.hdf5
