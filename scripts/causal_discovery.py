@@ -68,7 +68,7 @@ def _load_config() -> dict:
 _config = _load_config()
 _cd_cfg = _config.get("causal_discovery", {})
 
-DEFAULT_METHOD: str = _cd_cfg.get("method", "hybrid")
+DEFAULT_METHOD: str = _cd_cfg.get("method", "ic_selection")
 DEFAULT_ALPHA: float = _cd_cfg.get("pc_alpha", 0.01)
 DEFAULT_MAX_COND: int = _cd_cfg.get("pc_max_cond_set", 3)
 LINGAM_PRUNE: float = _cd_cfg.get("lingam_prune_threshold", 0.05)
@@ -78,6 +78,7 @@ NOTEARS_THRESHOLD: float = _cd_cfg.get("notears_threshold", 0.3)
 DEFAULT_BOOTSTRAP: int = _cd_cfg.get("bootstrap_runs", 100)
 STABILITY_THRESHOLD: float = _cd_cfg.get("bootstrap_stability_threshold", 0.7)
 MIN_OBS: int = _cd_cfg.get("min_obs_per_stock", 252)
+DIVERSITY_MAX_PER_FAMILY: int = _cd_cfg.get("diversity_max_per_family", 1)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -609,7 +610,67 @@ def discover_causal_graph(
         "feature_metadata": {},
     }
 
-    # --- Run causal discovery ---
+    # --- IC Selection (fast, diversity-aware) ---
+    if method == "ic_selection":
+        import re
+        target_idx = var_names.index(target_col)
+        feature_names = [n for n in var_names if n != target_col]
+
+        # Compute rank IC for each feature vs target
+        ic_results: list[tuple[str, float]] = []
+        for feat in feature_names:
+            feat_idx = var_names.index(feat)
+            with np.errstate(invalid="ignore"):
+                ic = np.corrcoef(
+                    np.argsort(np.argsort(data[:, feat_idx])),
+                    data[:, target_idx],
+                )[0, 1]
+            if not np.isnan(ic):
+                ic_results.append((feat, float(ic)))
+
+        # Sort by absolute IC (best first)
+        ic_results.sort(key=lambda x: abs(x[1]), reverse=True)
+
+        # Diversity: group by base feature name (strip trailing _\d+d)
+        def _base_name(name: str) -> str:
+            return re.sub(r'_\d+d$', '', name)
+
+        # Select with diversity: max N per base family
+        families_used: dict[str, int] = {}
+        selected: list[tuple[str, float]] = []
+        for feat, ic_val in ic_results:
+            base = _base_name(feat)
+            count = families_used.get(base, 0)
+            if count < DIVERSITY_MAX_PER_FAMILY:
+                selected.append((feat, ic_val))
+                families_used[base] = count + 1
+
+        # Cap at max_components (from alpha_construction config)
+        ac_cfg = _config.get("alpha_construction", {})
+        max_comp = ac_cfg.get("max_components", 3)
+        selected = selected[:max_comp]
+
+        result["causal_parents_of_target"] = [
+            {"feature": name, "ate": ic_val, "stability": 1.0}
+            for name, ic_val in selected
+        ]
+
+        families_str = ", ".join(
+            f"{_base_name(n)}({f})" for n, f in
+            [(s[0], families_used.get(_base_name(s[0]), 0)) for s in selected]
+        )
+        print(
+            f"  IC selection: {len(selected)} parents from "
+            f"{len(set(_base_name(s[0]) for s in selected))} families "
+            f"(diversity_max_per_family={DIVERSITY_MAX_PER_FAMILY})",
+            file=sys.stderr,
+        )
+        for name, ic_val in selected:
+            print(f"    {name}: IC={ic_val:+.4f} (base={_base_name(name)})", file=sys.stderr)
+
+        return result
+
+    # --- Run causal discovery (PC / LiNGAM / NOTEARS / hybrid) ---
     pc_result = None
     lingam_result = None
 

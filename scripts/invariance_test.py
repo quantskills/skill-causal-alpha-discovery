@@ -394,38 +394,58 @@ def run_invariance_test(
         regimes_df["date"] = pd.to_datetime(regimes_df["date"].astype(str), format="%Y%m%d")
         regimes = regimes_df.set_index("date")["regime"]
         regimes = regimes.reindex(avg_ret.index).fillna(0).astype(int)
+        method_list = [(regime_method, regimes)]
+    elif regime_method == "all":
+        # Run all three methods independently
+        method_list = [
+            ("volatility_clustering", identify_regimes(avg_ret, "volatility_clustering", n_regimes)),
+            ("return_quantiles", identify_regimes(avg_ret, "return_quantiles", n_regimes)),
+            ("calendar_year", identify_regimes(avg_ret, "calendar_year", max(n_regimes, 5))),
+        ]
     else:
         regimes = identify_regimes(avg_ret, method=regime_method, n_regimes=n_regimes)
+        method_list = [(regime_method, regimes)]
 
-    # Align
-    regimes = regimes.loc[avg_ret.index]
+    # Run ATE homogeneity test for each method
+    all_results: dict[str, Any] = {}
+    for mname, mregimes in method_list:
+        mregimes = mregimes.loc[avg_ret.index]
+        print(f"Testing ATE homogeneity: {mname} ({mregimes.nunique()} regimes)...", file=sys.stderr)
+        homogeneity_result = test_ate_homogeneity(
+            avg_factor.values, avg_ret.values, mregimes.values,
+        )
+        all_results[mname] = {
+            "n_regimes": int(mregimes.nunique()),
+            "regime_distribution": {
+                str(r): int((mregimes == r).sum())
+                for r in sorted(mregimes.unique())
+            },
+            "ate_homogeneity": homogeneity_result,
+            "invariance_certificate": {
+                "is_invariant": homogeneity_result.get("result") == "invariant",
+                "confidence": round(1 - homogeneity_result.get("p_value", 1), 4),
+                "sign_consistency": homogeneity_result.get("sign_consistency", 0),
+                "regimes_tested": homogeneity_result.get("n_regimes_tested", 0),
+                "verdict": _verdict(homogeneity_result),
+            },
+        }
 
-    # Run ATE homogeneity test
-    print(f"Testing ATE homogeneity across {regimes.nunique()} regimes...", file=sys.stderr)
-    homogeneity_result = test_ate_homogeneity(
-        avg_factor.values, avg_ret.values, regimes.values,
-    )
+    # Use first method for primary results, store all
+    primary = all_results[method_list[0][0]]
+    homogeneity_result = primary["ate_homogeneity"]
 
     # Build report
     report: dict[str, Any] = {
         "meta": {
             "factor_path": factor_path,
             "n_observations": n_obs,
-            "n_regimes": int(regimes.nunique()),
+            "n_regimes": primary["n_regimes"],
             "regime_method": regime_method,
-            "regime_distribution": {
-                str(r): int((regimes == r).sum())
-                for r in sorted(regimes.unique())
-            },
+            "regime_distribution": primary["regime_distribution"],
         },
         "ate_homogeneity": homogeneity_result,
-        "invariance_certificate": {
-            "is_invariant": homogeneity_result.get("result") == "invariant",
-            "confidence": round(1 - homogeneity_result.get("p_value", 1), 4),
-            "sign_consistency": homogeneity_result.get("sign_consistency", 0),
-            "regimes_tested": homogeneity_result.get("n_regimes_tested", 0),
-            "verdict": _verdict(homogeneity_result),
-        },
+        "invariance_certificate": primary["invariance_certificate"],
+        "all_results": all_results if len(method_list) > 1 else {},
     }
 
     # ── Per-component invariance testing ─────────────────────────────────────
@@ -549,7 +569,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--regime-method", default=REGIME_METHOD,
-        choices=["volatility_clustering", "return_quantiles", "calendar_year"],
+        choices=["volatility_clustering", "return_quantiles", "calendar_year", "all"],
         help=f"Regime identification method (default: {REGIME_METHOD}).",
     )
     parser.add_argument(

@@ -166,9 +166,24 @@ def generate_report(run_dir: str) -> str:
             yearly = stats.groupby("year")["daily_return"].apply(
                 lambda x: (1 + x).prod() - 1,
             )
-            yearly_str = "\n".join(
-                f"| {yr} | {ret*100:+.2f}% |" for yr, ret in yearly.items()
-            )
+            # Benchmark yearly returns
+            if "benchmark_value" in stats.columns:
+                bench_daily = stats["benchmark_value"].pct_change().fillna(0)
+                # Recompute: yearly bench return from the actual benchmark column
+                bench_yearly = stats.groupby("year").apply(
+                    lambda g: g["benchmark_value"].iloc[-1] / g["benchmark_value"].iloc[0] - 1
+                    if len(g) > 0 else 0
+                )
+                yearly_str = "\n".join(
+                    f"| {yr} | {ret*100:+.2f}% | {bench_yearly.get(yr, 0)*100:+.2f}% | "
+                    f"{(ret - bench_yearly.get(yr, 0))*100:+.2f}% |"
+                    for yr, ret in yearly.items()
+                )
+            else:
+                yearly_str = "\n".join(
+                    f"| {yr} | {ret*100:+.2f}% | — | — |"
+                    for yr, ret in yearly.items()
+                )
 
     # ── Header ───────────────────────────────────────────────────────────────
     lines: list[str] = []
@@ -348,8 +363,8 @@ def generate_report(run_dir: str) -> str:
     if yearly_str:
         lines.append("### Yearly Returns")
         lines.append("")
-        lines.append("| Year | Return |")
-        lines.append("|------|--------|")
+        lines.append("| Year | Portfolio | Benchmark | Excess |")
+        lines.append("|------|-----------|-----------|--------|")
         lines.append(yearly_str)
         lines.append("")
 
@@ -405,29 +420,7 @@ def generate_report(run_dir: str) -> str:
         )
     lines.append("")
 
-    # IC decay (if multi-horizon)
-    if len(ic_horizons) >= 2:
-        ic_vals = [r["ic_mean"] for r in ic_horizons]
-        horizons = [r["horizon_days"] for r in ic_horizons]
-        lines.append("### IC Term Structure")
-        lines.append("")
-        lines.append(
-            "The IC term structure shows how the factor's predictive power "
-            "evolves across different forward horizons. A decaying IC pattern "
-            "toward zero suggests the signal is short-lived; a persistent or "
-            "growing IC suggests a longer-duration alpha."
-        )
-        lines.append("")
-        lines.append("| Horizon | IC | Direction |")
-        lines.append("|---------|-----|-----------|")
-        for i, h in enumerate(horizons):
-            direction = "Reversal" if ic_vals[i] < 0 else "Momentum"
-            lines.append(
-                f"| {h}d | {ic_vals[i]:+.4f} | {direction} |"
-            )
-        lines.append("")
-
-    # IC autocorrelation (stability of the signal itself)
+    # IC autocorrelation (inline below the main IC table)
     if HAS_PANDAS:
         ics_path = rd / "ICs.csv"
         if not ics_path.exists():
@@ -444,31 +437,16 @@ def generate_report(run_dir: str) -> str:
                 if len(ic_series) > 20:
                     acf_1 = ic_series.autocorr(lag=1)
                     acf_5 = ic_series.autocorr(lag=5) if len(ic_series) > 5 else np.nan
-                    lines.append("### IC Stability")
-                    lines.append("")
+                    acf_label = (
+                        "🟢 persistent" if acf_1 > 0.3 else
+                        "🟡 moderate" if acf_1 > 0.1 else
+                        "🔴 noisy"
+                    )
                     lines.append(
-                        "IC autocorrelation measures how persistent the "
-                        "factor's predictive power is. High autocorrelation "
-                        "means the signal doesn't flip direction day-to-day — "
-                        "it's a stable alpha. Low/negative autocorrelation "
-                        "suggests noise or daily signal reversal."
+                        f"**IC 5d autocorrelation**: lag-1 ACF = {acf_1:+.3f} ({acf_label})"
+                        + (f", lag-5 ACF = {acf_5:+.3f}" if not np.isnan(acf_5) else "")
+                        + ". Higher ACF means the signal doesn't flip direction day-to-day."
                     )
-                    lines.append("")
-                    lines.append("| Lag | Autocorrelation | Interpretation |")
-                    lines.append("|-----|----------------|----------------|")
-                    acf1_label = (
-                        "🟢 Persistent" if acf_1 > 0.3 else
-                        "🟡 Moderate" if acf_1 > 0.1 else
-                        "🔴 Noisy" if acf_1 >= -0.1 else "🔴 Mean-reverting"
-                    )
-                    lines.append(f"| 1-day | {acf_1:+.3f} | {acf1_label} |")
-                    if not np.isnan(acf_5):
-                        acf5_label = (
-                            "🟢 Persistent" if acf_5 > 0.2 else
-                            "🟡 Moderate" if acf_5 > 0.0 else
-                            "🔴 Decaying"
-                        )
-                        lines.append(f"| 5-day | {acf_5:+.3f} | {acf5_label} |")
                     lines.append("")
 
     # ── Causal Graph ─────────────────────────────────────────────────────────
@@ -618,9 +596,66 @@ def generate_report(run_dir: str) -> str:
         )
         lines.append("")
 
+        # Combined verdict table when running all methods
+        all_results = invariance.get("all_results", {})
+        if all_results:
+            lines.append("### Combined Invariance Verdict")
+            lines.append("")
+            lines.append(
+                "Three regime definitions are tested independently. A robust "
+                "factor should pass all three — if it fails any, the effect is "
+                "sensitive to that particular type of regime change."
+            )
+            lines.append("")
+            method_labels = {
+                "volatility_clustering": "Volatility",
+                "return_quantiles": "Bull/Bear",
+                "calendar_year": "Calendar Year",
+            }
+            lines.append("| Method | χ² | p-value | Regimes | Sign Cons. | Verdict |")
+            lines.append("|--------|-----|---------|---------|------------|---------|")
+            passed = 0
+            total = 0
+            for mname, mdata in all_results.items():
+                ah = mdata.get("ate_homogeneity", {})
+                chi2 = ah.get("chi2_statistic", 0)
+                pv = ah.get("p_value", 1)
+                nr = ah.get("n_regimes_tested", 0)
+                sc = ah.get("sign_consistency", 0)
+                result = ah.get("result", "N/A")
+                em = "✅" if result == "invariant" else "⚠️"
+                label = method_labels.get(mname, mname)
+                lines.append(
+                    f"| {label} | {chi2:.2f} | {pv:.4f} | {nr} | {sc*100:.0f}% | {em} {result} |"
+                )
+                total += 1
+                if result == "invariant":
+                    passed += 1
+            lines.append("")
+            if passed == total:
+                lines.append("✅ **Passed all three** — strong evidence of genuine causal invariance.")
+            elif passed == 0:
+                lines.append("❌ **Failed all three** — the factor is likely a spurious correlation.")
+            else:
+                lines.append(
+                    f"🟡 **Passed {passed}/{total}** — the factor is stable in some "
+                    f"dimensions but sensitive in others."
+                )
+            lines.append("")
+
         homog = invariance.get("ate_homogeneity", {})
         if homog:
+            p_val = homog.get("p_value", 0)
+            alpha = homog.get("alpha", 0.05)
             lines.append("### ATE Homogeneity (χ² Test)")
+            lines.append("")
+            lines.append(
+                "Tests whether the factor's predictive effect is stable across "
+                "different market regimes. The null hypothesis is that the ATE "
+                "is the same in every regime (i.e., the factor is genuinely "
+                "causal and invariant). If p ≤ α, we reject that hypothesis — "
+                "the effect varies by regime and may be a spurious correlation."
+            )
             lines.append("")
             lines.append("| Metric | Value |")
             lines.append("|--------|-------|")
@@ -628,12 +663,83 @@ def generate_report(run_dir: str) -> str:
             emoji = "✅" if result_label == "invariant" else "⚠️"
             lines.append(f"| **Verdict** | {emoji} **{result_label}** |")
             lines.append(f"| χ² Statistic | {homog.get('chi2_statistic', 0):.4f} |")
-            lines.append(f"| Degrees of Freedom | {homog.get('degrees_of_freedom', 0)} |")
-            lines.append(f"| p-value | {homog.get('p_value', 0):.4f} |")
-            lines.append(f"| Significance (α) | {homog.get('alpha', 0.05)} |")
+            df_val = homog.get("degrees_of_freedom", 0)
+            lines.append(f"| Degrees of Freedom | {df_val} |")
+            lines.append(f"| p-value | {p_val:.4f} |")
+            lines.append(f"| Significance (α) | {alpha} |")
             lines.append(f"| Regimes Tested | {homog.get('n_regimes_tested', 0)} |")
-            lines.append(f"| Sign Consistency | {homog.get('sign_consistency', 0)*100:.0f}% |")
-            lines.append(f"| Pooled ATE | {homog.get('ate_pooled', 0):+.4f} |")
+            sign_cons = homog.get("sign_consistency", 0)
+            lines.append(f"| Sign Consistency | {sign_cons*100:.0f}% |")
+            ate_pooled = homog.get("ate_pooled", 0)
+            lines.append(f"| Pooled ATE | {ate_pooled:+.4f} |")
+            lines.append("")
+
+            # Explanations as bullet list
+            lines.append("**What each metric means:**")
+            lines.append("")
+            verdict_explanation = (
+                "The factor's effect is statistically indistinguishable across "
+                "all tested regimes — consistent with a genuine causal mechanism."
+            ) if result_label == "invariant" else (
+                "The factor's predictive power changes significantly depending "
+                "on market conditions — likely a spurious correlation rather "
+                "than a stable causal relationship."
+            )
+            lines.append(f"- **Verdict**: {verdict_explanation}")
+            lines.append(
+                f"- **χ² ({homog.get('chi2_statistic', 0):.2f})**: "
+                f"Measures how much the ATE varies across regimes. A larger "
+                f"value means the effect differs more between calm and turbulent markets."
+            )
+            lines.append(
+                f"- **Degrees of Freedom ({df_val})**: "
+                f"The number of independent comparisons ({df_val} = {homog.get('n_regimes_tested', 0)} regimes minus 1). "
+                f"More regimes require stronger evidence to conclude invariance."
+            )
+            lines.append(
+                f"- **p-value ({p_val:.4f})**: "
+                f"If the factor were truly invariant, this is the probability "
+                f"of observing this much ATE variation by chance. "
+                f"A small p-value (≤{alpha}) means the variation is too large "
+                f"to be random noise — the factor is regime-dependent."
+            )
+            lines.append(
+                f"- **Significance α ({alpha})**: "
+                f"The threshold for rejecting invariance. α = {alpha} means we "
+                f"accept a 5% chance of falsely labeling a truly invariant "
+                f"factor as regime-dependent."
+            )
+            lines.append(
+                f"- **Regimes Tested ({homog.get('n_regimes_tested', 0)})**: "
+                f"Number of distinct market environments identified by "
+                f"volatility clustering. Low-vol and high-vol periods are "
+                f"treated as separate regimes."
+            )
+            if sign_cons >= 0.9:
+                sign_explanation = (
+                    "the ATE has the same sign (direction) in nearly every "
+                    "regime — the effect direction is consistent"
+                )
+            elif sign_cons >= 0.7:
+                sign_explanation = (
+                    "the ATE keeps the same sign in most regimes, but flips "
+                    "direction in a minority — the effect weakens or reverses "
+                    "under certain market conditions"
+                )
+            else:
+                sign_explanation = (
+                    "the ATE frequently flips sign across regimes — the "
+                    "direction of the effect is unreliable"
+                )
+            lines.append(
+                f"- **Sign Consistency ({sign_cons*100:.0f}%)**: "
+                f"Fraction of regimes where ATE keeps the same sign — {sign_explanation}."
+            )
+            lines.append(
+                f"- **Pooled ATE ({ate_pooled:+.4f})**: "
+                f"The weighted average effect across all regimes. "
+                f"{'Positive: stocks with higher factor scores tend to have higher forward returns.' if ate_pooled > 0 else 'Negative: stocks with higher factor scores tend to have lower forward returns (a reversal effect).'}"
+            )
             lines.append("")
 
             # Per-regime ATE table with date ranges
@@ -664,26 +770,37 @@ def generate_report(run_dir: str) -> str:
                                         unique_dates[end_idx].strftime("%Y-%m-%d"),
                                     )
 
+                # Regime type labels
+                n_reg_total = len(ate_per_regime)
+                regime_labels: dict[int, str] = {}
+                vol_labels = ["Very Low Vol", "Low Vol", "Med-Low Vol", "Med-High Vol", "High Vol", "Very High Vol"]
+                for ri in range(n_reg_total):
+                    if ri < len(vol_labels):
+                        regime_labels[ri] = vol_labels[ri]
+                    else:
+                        frac = ri / max(n_reg_total - 1, 1)
+                        regime_labels[ri] = f"Vol {frac:.0%}"
+
                 lines.append("### Combined Factor ATE by Regime")
                 lines.append("")
                 lines.append(
                     "The table below shows the Average Treatment Effect (ATE) "
                     "of the **full causal alpha factor** in each market regime. "
                     "Consistent ATE across regimes = causal stability. Regimes "
-                    "are ordered by volatility level (0 = lowest vol, higher = "
-                    "higher vol)."
+                    "are ordered by volatility level."
                 )
                 lines.append("")
-                lines.append("| Regime | Date Range | ATE | Std Error | Obs |")
-                lines.append("|--------|-----------|-----|-----------|-----|")
+                lines.append("| Regime | Type | Date Range | ATE | Std Error | Obs |")
+                lines.append("|--------|------|-----------|-----|-----------|-----|")
                 for i in range(len(ate_per_regime)):
                     ate = ate_per_regime[i]
                     se = se_per_regime[i] if i < len(se_per_regime) else 0
                     obs = obs_per_regime[i] if i < len(obs_per_regime) else 0
                     dr = regime_dates.get(i, ("—", "—"))
+                    rtype = regime_labels.get(i, f"Regime {i}")
                     if not np.isnan(ate):
                         lines.append(
-                            f"| {i} | {dr[0]} → {dr[1]} | {ate:+.4f} | ±{se:.4f} | {obs} |"
+                            f"| {i} | {rtype} | {dr[0]} → {dr[1]} | {ate:+.4f} | ±{se:.4f} | {obs} |"
                         )
                 lines.append("")
 
@@ -812,26 +929,34 @@ def generate_report(run_dir: str) -> str:
     worst_yr = ""
     best_ret = -999.0
     worst_ret = 999.0
+    best_excess = 0.0
+    worst_excess = 0.0
     if yearly_str:
         for yl in yearly_str.strip().split("\n"):
             parts = yl.strip("|").split("|")
-            if len(parts) >= 2:
+            if len(parts) >= 4:
                 yr = parts[0].strip()
                 ret_str = parts[1].strip().rstrip("%")
+                excess_str = parts[3].strip().rstrip("%") if len(parts) >= 4 else "0"
                 try:
                     ret = float(ret_str)
+                    excess = float(excess_str) if excess_str and excess_str != "—" else 0
                     if ret > best_ret:
                         best_ret = ret
                         best_yr = yr
+                        best_excess = excess
                     if ret < worst_ret:
                         worst_ret = ret
                         worst_yr = yr
+                        worst_excess = excess
                 except ValueError:
                     pass
     if best_yr and worst_yr:
         lines.append(
             f"{tk}. **Yearly dispersion**: Best year {best_yr} "
-            f"({best_ret:+.1f}%), worst year {worst_yr} ({worst_ret:+.1f}%). "
+            f"(portfolio {best_ret:+.1f}%, excess {best_excess:+.1f}%), "
+            f"worst year {worst_yr} "
+            f"(portfolio {worst_ret:+.1f}%, excess {worst_excess:+.1f}%). "
             f"Large dispersion may indicate regime sensitivity."
         )
         tk += 1
