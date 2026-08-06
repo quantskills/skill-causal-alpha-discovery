@@ -134,11 +134,14 @@ python scripts/integrate_backtest.py \
 
 ## How It Works
 
-1. **Generate feature pool**: From 6 OHLCV fields, generate 60 derived features
-2. **Causal discovery**: Rank-IC selection by default (fast), optional PC/LiNGAM/NOTEARS
-3. **Build alpha**: Select top causal parents → map to valid OHLCV expressions →
-   weight by ATE → cross-sectional rank normalize (max 3 components by default)
-4. **Invariance test**: Split test period into 6 market regimes → χ² homogeneity test
-5. **Backtest**: Built-in engine computes rank IC, long-only portfolio, Sharpe, max drawdown
-6. **Analysis report**: Generate comprehensive report with signal family classification,
-   IC stability, and regime invariance diagnostics
+1. **Generate feature pool**: From 6 OHLCV fields, generate 88+ derived features (5 families)
+2. **Causal discovery**: Rank-IC selection + diversity (max 1 per family). Excludes future-return
+   features. Supports multi-horizon target tuning (5d/10d/20d).
+3. **Build alpha**: Top-3 causal parents → valid OHLCV expressions → ATE-weighted → rank normalized.
+   Auto vol-gate: if ATE flips in high-vol regimes, wraps with `* (1 - rank(vol))`.
+4. **Invariance test**: Three methods simultaneously (volatility, bull/bear, calendar year)
+   with combined verdict and per-regime ATE tables.
+5. **Backtest**: Built-in engine computes rank IC (1d/5d/10d/20d), long-only portfolio,
+   Sharpe, max drawdown, IC autocorrelation.
+6. **Analysis report**: ~16-section comprehensive report with signal family classification,
+   per-method ATE tables, and dynamic key takeaways.

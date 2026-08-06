@@ -614,7 +614,11 @@ def discover_causal_graph(
     if method == "ic_selection":
         import re
         target_idx = var_names.index(target_col)
-        feature_names = [n for n in var_names if n != target_col]
+        # Exclude other forward_return variants (look-ahead bias)
+        feature_names = [
+            n for n in var_names
+            if n != target_col and not n.startswith("forward_return")
+        ]
 
         # Compute rank IC for each feature vs target
         ic_results: list[tuple[str, float]] = []

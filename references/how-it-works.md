@@ -112,20 +112,20 @@ scaling to hundreds of variables.
 
 ### Phase 1: Generate Feature Pool
 
-From the 6 OHLCV fields (open, high, low, close, volume, amount), the skill
-generates 60 derived features using the 27 allowed functions. Features are
-organized into five families:
+From the 6 OHLCV fields, the skill generates **88+ derived features** across
+five families (configurable up to 100 via `max_total_features`):
 
-| Family | Examples | What It Captures |
-|--------|----------|-----------------|
-| **Momentum** | `returns(close, 20)`, `decay_linear(returns(close,1),5)` | Trend strength, direction |
-| **Volatility** | `ts_std(returns(close,1), 20)`, `vol_ratio_20_60` | Risk, dispersion, regime |
-| **Volume/Flow** | `volume / adv(20)`, `ts_std(amount,40)/ts_mean(amount,40)` | Liquidity, participation |
-| **Price Pattern** | `(close-low)/(high-low)`, `(close-ts_mean(close,20))/ts_std(close,20)` | Intraday position, mean reversion |
-| **Cross-Family** | `correlation(rank(close), rank(volume), 20)`, `returns(close,5)*amount/ts_mean(amount,5)` | Price-volume/amount interaction |
+| Family | Count | Examples |
+|--------|-------|---------|
+| **Momentum** | ~20 | `returns(close, n)`, `decay_linear(returns(close,1), n)` |
+| **Volatility** | ~20 | `ts_std(returns(close,1), n)`, `vol_of_vol`, `down_vol` |
+| **Volume/Flow** | ~20 | `ts_std(amount, n)/ts_mean(amount, n)`, `vol_cv_*`, `amt_cv_*` |
+| **Price Pattern** | ~14 | `intraday_pos`, `candle_body_ratio`, `price_z_*`, `dist_high_*` |
+| **Cross-Family** | ~14 | `correlation(rank(close), rank(volume), n)`, `mom_*_vol_*` |
 
-Features are generated separately for **train** and **test** periods, defined in
-`config.json` under `data_split` (default: train 2015–2020, test 2021–2025).
+Features are generated separately for **train** and **test** periods (config:
+`data_split`). Forward return targets at 5d, 10d, and 20d are added for
+multi-horizon tuning.
 
 ### Phase 2: Causal Discovery
 
@@ -170,31 +170,44 @@ shows per-regime ATE with date ranges for full transparency.
 
 ### Phase 5: Backtest Validation
 
-The factor expression is evaluated on **test-period features**, then fed into
-a built-in standalone backtest engine that computes:
+The factor expression is evaluated on **test-period features**, optionally with
+auto vol-gating, then fed into the built-in backtest engine:
 
-- **Rank IC**: Cross-sectional Spearman correlation between factor values
-  and forward returns (daily, multi-horizon 1d/5d/10d/20d)
+- **Auto vol-gate**: If invariance testing detects ATE sign flips in high-vol
+  regimes, the expression is automatically wrapped with
+  `* (1 - rank(ts_std(returns(close,1), 20)))` to neutralize the signal on
+  high-volatility stocks.
+- **Rank IC**: Cross-sectional Spearman correlation (1d/5d/10d/20d horizons)
 - **Portfolio simulation**: Long-only equal-weight, top-200 stocks, 5-day
-  rebalance, 5bps transaction costs
-- **Performance metrics**: Sharpe ratio, annual return, max drawdown,
-  win ratio, CAGR, excess return vs. equal-weight benchmark
-- **IC stability**: Autocorrelation of the daily IC series
+  rebalance, 5bps costs
+- **IC stability**: Lag-1 and lag-5 autocorrelation of daily IC series
 
 ### Phase 6: Generate Analysis Report
 
-The `generate_report.py` script produces a comprehensive ~180-line Markdown
-report with 18 sections including:
+A comprehensive ~16-section Markdown report with:
+- Train/test period configuration
+- Component breakdown with signal family classification (diversity analysis)
+- Performance summary with cumulative return & drawdown
+- Multi-horizon IC with autocorrelation
+- Three-method invariance: combined verdict + per-method ATE tables with type
+  labels (Very Low Vol → Very High Vol, Deep Bear → Strong Bull, calendar years)
+- Dynamic key takeaways based on actual performance data
 
-- Configuration with explicit train/test period dates
-- Component breakdown with signal family classification
-- Performance summary labeled with the test period
-- Cumulative return & drawdown summary
-- Multi-horizon IC analysis with term structure
-- IC stability (lag-1 and lag-5 autocorrelation)
-- Causal discovery graph (Mermaid diagram)
-- Regime invariance test results with per-regime date ranges
-- Dynamic interpretation and key takeaways
+## Practical Tips
+
+### Choosing the Target Horizon
+
+- **5-day forward returns**: Short-term reversal/momentum effects.
+- **20-day forward returns** (recommended default): Stronger signal-to-noise,
+  better for causal discovery. The skill can try multiple horizons to find
+  the best.
+
+### Auto Vol-Gating
+
+When the invariance test shows ATE sign flips in high-volatility regimes,
+the skill automatically applies a vol gate. This is documented in the
+`causal_alpha_expression.json` under `vol_gated: true`. The gated expression
+is saved as `causal_factor_gated.csv` and should be used for backtesting.
 
 ---
 

@@ -102,14 +102,31 @@ scaling to hundreds of variables.
 
 **Weaknesses**: Linear SEM assumption, requires careful hyperparameter tuning.
 
-### 2.4 Hybrid Approach (Recommended)
+### 2.4 Rank-IC Selection (Default, Recommended)
 
-The skill's default `hybrid` method:
-1. **PC algorithm** finds the skeleton (undirected edges) — robust, non-parametric
-2. **LiNGAM** orients edges and estimates effect sizes — uses non-Gaussianity
+**What it does**: Computes cross-sectional rank IC between each feature and
+the target, then selects top features by absolute IC. Applies diversity
+constraints to avoid near-duplicate features.
+
+**How it works**:
+1. For each feature, compute daily rank IC against target
+2. Average IC across all dates → feature score
+3. Group features by base name (stripping trailing `_\d+d` lookback suffix)
+4. Select up to `max_components` features, max `diversity_max_per_family` per base group
+5. Also excludes any `forward_return_*` feature to prevent look-ahead bias
+
+**Strengths**: Extremely fast (handles 300K+ observations × 88+ features),
+interpretable, avoids redundant signals. No hyperparameter tuning needed.
+
+**Config**: `causal_discovery.method: "ic_selection"`,
+`causal_discovery.diversity_max_per_family: 1` (default).
+
+### 2.5 Hybrid Approach (Alternative)
+
+For deeper analysis on smaller datasets, combine:
+1. **PC algorithm** finds the skeleton — robust, non-parametric
+2. **LiNGAM** orients edges and estimates effect sizes
 3. **Bootstrap** (100 runs) computes edge stability scores
-
-This combines the robustness of PC with the orientability of LiNGAM.
 
 ---
 
@@ -237,25 +254,28 @@ Where each `exprᵢ` is a valid OHLCV expression.
 
 ### Minimum Data Requirements
 
-- **Observations**: At least 250 × N_stocks observations (e.g., 3000 stocks ×
-  250 days = 750K obs for PC; fewer needed for LiNGAM/NOTEARS)
-- **Variables**: 10–60 OHLCV-derived features + target
-- **Regimes**: At least 4 distinct regimes with ≥60 obs each for invariance testing
+- **Observations**: At least 250 × N_stocks for reliable IC estimation
+- **Features**: 88+ OHLCV-derived features + multi-horizon targets (5d/10d/20d)
+- **Regimes**: At least 4 distinct regimes per method with ≥60 obs each.
+  Default: three methods tested simultaneously (volatility, bull/bear, calendar).
 
 ### Choosing the Method
 
 | Scenario | Recommended Method |
 |----------|-------------------|
+| Most cases (recommended) | `ic_selection` (fast, diverse, 88+ features) |
 | < 20 variables, need robust skeleton | `pc` |
 | 20–50 variables, need effect sizes | `lingam` |
 | > 50 variables, GPU available | `notears` |
-| Most cases (recommended) | `hybrid` |
+| Combine PC + LiNGAM | `hybrid` |
 
 ### Interpreting Results
 
-- **Causal parents with high stability (>0.8)** AND **pass invariance test**:
-  These are your best candidates. They represent genuine structural
-  relationships that should persist out-of-sample.
+- **Diverse parents from different families**: Best case — each component
+  captures a genuinely different causal mechanism.
+- **Auto vol-gate applied**: The factor is wrapped with a vol filter. This
+  means the ATE flips sign in high-volatility regimes. The gated expression
+  neutralizes the signal on high-vol stocks.
 
 - **Causal parents with low stability (<0.5)** OR **fail invariance test**:
   These are likely spurious. The edge appeared in some bootstrap runs but not
@@ -264,6 +284,28 @@ Where each `exprᵢ` is a valid OHLCV expression.
 - **Variables that are NOT causal parents but ARE correlated with target**:
   These are mediated or confounded relationships. They may work in backtest
   but are not reliable for live trading.
+
+## 7. Auto Vol-Gating
+
+When the invariance test detects that the ATE flips sign in high-volatility
+regimes (consistently negative in low/med vol, positive in high vol), the
+`build_causal_alpha.py` script automatically wraps the expression:
+
+```
+(base_alpha) * (1 - rank(ts_std(returns(close, 1), 20)))
+```
+
+This neutralizes the alpha signal on high-volatility stocks where the causal
+relationship breaks down. The gated factor is saved as `causal_factor_gated.csv`
+and should be used for backtesting. The `causal_alpha_expression.json` records
+`vol_gated: true` when this is applied.
+
+## 8. Multi-Horizon Tuning
+
+Forward return targets at 5d, 10d, and 20d are generated. Running IC selection
+on each target and comparing the resulting ATE magnitudes reveals which horizon
+has the strongest causal signal. Typically, 20d forward returns produce stronger
+and more stable ATE than 5d. The best target is selected for the final alpha.
 
 ---
 

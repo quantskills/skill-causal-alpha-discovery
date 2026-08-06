@@ -195,6 +195,7 @@ def build_causal_alpha(
     max_components: int = MAX_COMPONENTS,
     min_stability: float = MIN_STABILITY,
     weight_method: str = WEIGHT_METHOD,
+    invariance_report: dict | None = None,
 ) -> tuple[str, pd.DataFrame, dict[str, Any]]:
     """Build a causal alpha factor from discovered causal graph.
 
@@ -330,14 +331,70 @@ def build_causal_alpha(
     if len(terms) > 1:
         expression = f"({expression})"
 
+    # ── Auto vol-gate from invariance data ────────────────────────────────────
+    vol_gated = False
+    if invariance_report:
+        all_res = invariance_report.get("all_results", {})
+        vol_data = all_res.get("volatility_clustering", {})
+        if vol_data:
+            ate_list = vol_data.get("ate_homogeneity", {}).get("ate_per_regime", [])
+            # Find where the ATE sign flips from negative to positive
+            if len(ate_list) >= 4:
+                valid_ates = [(i, a) for i, a in enumerate(ate_list) if not np.isnan(a)]
+                signs = [1 if a > 0 else (-1 if a < 0 else 0) for _, a in valid_ates]
+                # Check: first half consistently negative, second half contains positives
+                mid = len(valid_ates) // 2
+                first_signs = signs[:mid]
+                second_signs = signs[mid:]
+                first_neg = sum(1 for s in first_signs if s < 0)
+                second_pos = sum(1 for s in second_signs if s > 0)
+
+                if first_neg >= len(first_signs) * 0.66 and second_pos >= 1:
+                    vol_gated = True
+                    expression = (
+                        f"({expression}) * "
+                        f"(1 - rank(ts_std(returns(close, 1), 20)))"
+                    )
+                    print(
+                        f"[INFO] Auto vol-gate applied: ATE flips sign in "
+                        f"high-vol regimes. Expression wrapped with vol filter.",
+                        file=sys.stderr,
+                    )
+
     # Compute factor values from features data
     factor_df = _compute_factor_from_features(features_df, components)
+
+    # Apply vol gate to factor values if enabled
+    if vol_gated:
+        # Compute vol rank from features: rank(ts_std(returns(close,1), 20))
+        vol_feat = "vol_20d"  # maps to ts_std(returns(close,1), 20)
+        if vol_feat in features_df["feature_name"].values:
+            vol_subset = features_df[features_df["feature_name"] == vol_feat]
+            vol_pivot = vol_subset.pivot_table(
+                index="date", columns="ticker", values="value", aggfunc="first",
+            )
+            vol_rank = vol_pivot.rank(axis=1, pct=True)
+            # Melt back to long format
+            vol_long = vol_rank.reset_index().melt(
+                id_vars="date", var_name="ticker", value_name="vol_rank",
+            )
+            # Merge with factor_df and apply gate
+            factor_df = factor_df.merge(vol_long, on=["date", "ticker"], how="left")
+            factor_df["causal_alpha"] = factor_df["causal_alpha"] * (1 - factor_df["vol_rank"].fillna(0.5))
+            factor_df = factor_df.drop(columns=["vol_rank"])
+            factor_df = factor_df.dropna(subset=["causal_alpha"])
+            print(
+                f"[INFO] Vol gate applied to factor matrix: "
+                f"{len(factor_df):,} rows after gating.",
+                file=sys.stderr,
+            )
 
     meta: dict[str, Any] = {
         "expression": expression,
         "target": target,
         "n_components": len(components),
         "components": components,
+        "vol_gated": vol_gated,
         "unmappable_features": unmappable,
         "weight_method": weight_method,
         "features_path": "",  # set by caller in main()
@@ -436,6 +493,10 @@ def main() -> None:
         "--no-rank", action="store_true",
         help="Disable cross-sectional rank normalization.",
     )
+    parser.add_argument(
+        "--invariance", default=None,
+        help="Path to invariance_report.json for auto vol-gating.",
+    )
     args = parser.parse_args()
 
     # Override global config
@@ -465,12 +526,20 @@ def main() -> None:
         file=sys.stderr,
     )
 
+    # Load optional invariance report for auto vol-gating
+    inv_report = None
+    if args.invariance:
+        inv_path = Path(args.invariance)
+        if inv_path.exists():
+            inv_report = json.loads(inv_path.read_text(encoding="utf-8"))
+
     # Build causal alpha
     expression, factor_df, meta = build_causal_alpha(
         causal_graph, features_df,
         max_components=args.max_components,
         min_stability=args.min_stability,
         weight_method=args.weight_method,
+        invariance_report=inv_report,
     )
 
     if factor_df.empty:

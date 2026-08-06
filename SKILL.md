@@ -51,8 +51,8 @@ quantSkills:
   validation_level: listed
   maintainer_type: community
   requires: []
-  summary_zh: 基于因果发现（PC+LiNGAM+NOTEARS）从OHLCV数据中挖掘具有因果不变性的alpha因子，确保因子在跨市场体制下保持稳定预测力。
-  summary_en: Discover regime-invariant alpha factors from OHLCV data via causal discovery (PC+LiNGAM+NOTEARS), with formal invariance testing and backtest integration.
+summary_zh: 基于IC选择+多样性约束从OHLCV数据中挖掘因果alpha因子，自动检测体制失效并施加波动率门控，支持多目标周期调优，全体制（波动率/牛熊/年度）不变性检验。
+summary_en: Discover causal alpha factors from OHLCV data via IC selection with diversity constraints, auto vol-gating from invariance data, multi-horizon target tuning, and three-method regime testing.---
 ---
 
 # Causal Alpha
@@ -71,22 +71,27 @@ data required. It supports two data sources:
 
 It provides:
 
-- A **causal discovery engine** — rank-IC selection by default (fast, scalable)
-  with optional PC + LiNGAM + NOTEARS for deeper causal analysis.
-- A **causal alpha constructor** — converts causal effects into valid
-  OHLCV-only factor expressions (6 fields, 27 functions), limited to 3 components
-  by default to control complexity (configurable via `max_components`).
-- **Regime invariance testing** — splits test-period data into distinct market
-  regimes and tests whether the factor ATE remains stable (χ² homogeneity).
+- **Rank-IC selection** — fast, scalable causal discovery (300K+ observations,
+  88+ features). Uses diversity constraints (`diversity_max_per_family`) to
+  avoid selecting near-duplicate features differing only by lookback window.
+  PC, LiNGAM, and NOTEARS available as alternatives for smaller datasets.
+- **Auto vol-gating** — after invariance testing, automatically detects if the
+  ATE flips sign in high-volatility regimes and wraps the alpha expression with
+  a vol filter: `alpha * (1 - rank(ts_std(returns(close,1), 20)))`.
+- **Multi-horizon tuning** — can try forward returns at 5d, 10d, and 20d
+  horizons, selecting the target with the strongest causal signal.
+- **Three-method regime testing** — tests invariance across volatility regimes,
+  bull/bear markets, and calendar years simultaneously (`regime_method: "all"`).
 - **Built-in backtest engine** — self-contained cross-sectional backtest with
-  rank IC, long-only portfolio, Sharpe, max drawdown, IC stability.
-- **Comprehensive analysis report** — single Markdown report with 18 sections:
-  configuration, component breakdown with signal families, performance, IC
-  analysis, IC stability, causal graph (Mermaid), drawdown, regime invariance,
-  and dynamic key takeaways.
-- **Train/test period split** — configured via `data_split` in `config.json`
-  (default: train 2015–2020, test 2021–2025). Causal discovery on train;
-  backtest and invariance testing on test.
+  rank IC (1d/5d/10d/20d), long-only portfolio, Sharpe, max drawdown, IC
+  stability autocorrelation.
+- **Comprehensive analysis report** — single Markdown report (~16 sections):
+  configuration with train/test split, component breakdown with signal families,
+  performance, cumulative return & drawdown, multi-horizon IC, IC autocorrelation,
+  causal graph (Mermaid), drawdown analysis, per-method regime ATE tables with
+  type labels, and dynamic key takeaways.
+- **Configurable train/test split** — `data_split` in `config.json`
+  (default: train 2015–2020, test 2021–2025).
 - Creator: `davideliu` (`https://github.com/davideliu`).
 - Maintainer: `davideliu` for the QuantSkills community.
 - Repository: `https://github.com/quantskills/skill-causal-alpha`.
@@ -110,53 +115,46 @@ It provides:
 ### Phase 2: Causal Discovery
 
 2. **Discover causal structure** — run:
-   `python scripts/causal_discovery.py --features features.csv --target forward_return_5d --method ic_selection --output causal_graph.json`
-   By default uses **rank-IC selection** (fast, scalable to 60+ features and
-   300K+ observations). Computes cross-sectional rank IC between each feature
-   and the target, selects top features by absolute IC as causal parents.
-   Alternative methods (`pc`, `lingam`, `notears`, `hybrid`) available for
-   deeper causal structure learning on smaller datasets.
+   `python scripts/causal_discovery.py --features features.csv --target forward_return_20d --method ic_selection --output causal_graph.json`
+   - Default: **rank-IC selection** with diversity (`diversity_max_per_family: 1`).
+     Excludes other forward_return variants to prevent look-ahead bias.
+   - Try multiple targets (5d/10d/20d) to find the strongest causal signal.
+   - Alternative methods: `pc`, `lingam`, `notears`, `hybrid` for deeper analysis.
 
 ### Phase 3: Build Causal Alpha
 
-3. **Construct causal alpha expression** — run:
-   `python scripts/build_causal_alpha.py --graph causal_graph.json --features features.csv --data-root <market_data_parquet> --output causal_factor.csv`
-   - Identifies direct causal parents of forward returns
-   - Estimates Average Treatment Effects (ATE) via backdoor adjustment
-   - Combines components into a valid OHLCV-only factor expression
-   - Outputs the expression string AND the computed factor matrix
+3. **Construct causal alpha** — run:
+   `python scripts/build_causal_alpha.py --graph causal_graph.json --features features.csv --output causal_factor.csv --expression-output causal_alpha_expression.json --max-components 3`
+   - Limited to 3 components by default (configurable via `max_components`).
+   - If `--invariance invariance_report.json` is provided, **auto-applies a vol
+     gate** when ATE sign flips in high-volatility regimes.
+   - Evaluate on test features separately:
+     `python scripts/build_causal_alpha.py --graph causal_graph.json --features features_test.csv --output causal_factor_test.csv --max-components 3`
 
 ### Phase 4: Invariance Testing
 
 4. **Test regime invariance** — run:
-   `python scripts/invariance_test.py --factor causal_factor.csv --data-root <market_data_parquet> --regimes regimes.csv --output invariance_report.json`
-   - Splits data into 5–7 distinct market regimes
-   - Tests whether ATE is equal across all regimes (χ² homogeneity test)
-   - Labels each causal edge as invariant or regime-dependent
-   - Produces a formal invariance certificate
+   `python scripts/invariance_test.py --factor causal_factor_test.csv --data-root <market_data> --regime-method all --output invariance_report.json`
+   - Default `regime_method: "all"` runs three independent tests:
+     volatility clustering, bull/bear (return quantiles), and calendar year.
+   - Produces per-regime ATE tables with type labels and date ranges.
+   - Per-method χ² test with p-values and sign consistency.
 
-### Phase 5: Backtest Validation
+### Phase 5: Backtest + Auto-Gating
 
-5. **Backtest the causal factor** — first evaluate on test features, then backtest:
-   `python scripts/build_causal_alpha.py --graph causal_graph.json --features features_test.csv --output causal_factor_test.csv`
-   `python scripts/integrate_backtest.py --factor causal_factor_test.csv --factor-column causal_alpha --use-pandadata --start-date <YYYYMMDD> --end-date <YYYYMMDD> --indicator 000300 --output-dir output/run_<ts>/`
-   - Factor must be computed on **test-period features** (not train)
-   - Uses the built-in standalone backtest engine
-   - Produces IC series (ICs.csv), portfolio stats (stats.csv), summary JSON
+5. **Apply vol-gate and backtest** — run:
+   `python scripts/build_causal_alpha.py --graph causal_graph.json --features features_test.csv --output causal_factor_gated.csv --max-components 3 --invariance invariance_report.json`
+   `python scripts/integrate_backtest.py --factor causal_factor_gated.csv --factor-column causal_alpha --use-pandadata --start-date 20210101 --end-date 20251231 --indicator 000300 --output-dir output/run_<ts>/`
+   - Auto-gating wraps the expression with `* (1 - rank(ts_std(returns(close,1), 20)))`
+     when ATE flips sign in high-vol regimes.
+   - Backtest on test period with standalone engine.
 
 ### Phase 6: Generate Report
 
 6. **Generate analysis report** — run:
-   `python scripts/generate_report.py --run-dir output/run_<ts>/ --output output/run_<ts>/causal_analysis.md`
-   Produces a comprehensive Markdown report (~180 lines, 18 sections):
-   - Configuration with train/test period split
-   - Component breakdown with signal family classification
-   - Performance summary labeled with test period dates
-   - Cumulative return & drawdown summary
-   - Multi-horizon IC analysis with term structure and IC stability
-   - Causal discovery graph (Mermaid diagram)
-   - Regime invariance test (χ², per-regime ATE with date ranges)
-   - Dynamic interpretation and key takeaways
+   `python scripts/generate_report.py --run-dir output/run_<ts>/ --output causal_analysis.md`
+   - ~16 sections: config, components, performance, IC, IC autocorrelation,
+     causal graph, drawdown, combined invariance verdict, per-method ATE tables.
 
 ## Output Contract
 
