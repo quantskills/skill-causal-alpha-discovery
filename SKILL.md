@@ -1,5 +1,5 @@
 ---
-name: causal-alpha
+name: causal-alpha-discovery
 description: >-
   Discover causal alpha factors from OHLCV data using causal discovery
   (PC + LiNGAM + NOTEARS), build Structural Causal Models, construct
