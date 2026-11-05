@@ -236,3 +236,7 @@ python scripts/generate_report.py --run-dir output/run_001/ --output output/run_
   natively discover `SKILL.md` folders.
 - OpenAI-style agent registries can read `agents/openai.yaml` for display name,
   short description, and default invocation prompt.
+
+## Pandadata compatibility
+
+[Pandadata 1.0.6 compatibility](references/pandadata-compatibility.md) — exact SDK baseline, validation scope, and shared guidance for all supported agent runtimes.

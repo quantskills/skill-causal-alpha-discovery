@@ -137,3 +137,6 @@ python scripts/integrate_backtest.py \
 5. **不变性检验**：三种体制同时检验（波动率聚类 / 牛熊 / 年度），产生合并判决
 6. **回测验证**：内置引擎计算 rank IC（1d/5d/10d/20d）/ 多头组合 / Sharpe / 最大回撤
 7. **分析报告**：~16 节综合报告，含信号家族分类、IC 自相关、体制 ATE 表
+
+
+Pandadata 兼容维护：[abgyjaguo](https://github.com/abgyjaguo)，保留原项目作者署名。

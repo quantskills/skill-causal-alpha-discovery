@@ -145,3 +145,6 @@ python scripts/integrate_backtest.py \
    Sharpe, max drawdown, IC autocorrelation.
 6. **Analysis report**: ~16-section comprehensive report with signal family classification,
    per-method ATE tables, and dynamic key takeaways.
+
+
+Pandadata compatibility maintenance: [abgyjaguo](https://github.com/abgyjaguo). Existing authorship is retained.
